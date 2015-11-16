@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import pyximport; pyximport.install()
 import sys
 import os
 import operator
@@ -103,7 +104,7 @@ while date_count < history_days:
                 else:
                     memory[X_df_name] = memory[X_df_name].append(X_df, ignore_index=True)
             for target in targets:
-                Y, Y_titles = features.generate_targets(Y_series, expected_range, targets)
+                Y, Y_titles = features.generate_targets(Y_series, expected_range, [target])
                 Y_df = pandas.DataFrame([Y], columns=Y_titles, dtype=numpy.float64)
                 Y_df_name = "%s_%s" % (target, t)
                 if Y_df_name not in memory:
