@@ -3,13 +3,12 @@
 import sys
 import os
 import operator
+import datetime as dt
 from datetime import datetime
 from optparse import OptionParser
 import configparser
-import math
 import numpy
 import pandas
-import sqlite3
 
 import batch
 import records
@@ -20,6 +19,7 @@ parser = OptionParser()
 parser.add_option("--directory", dest="directory", help="Directory to Store Data", default="data")
 parser.add_option("--date", dest="date", help="Date (YYYYMMDD)", default=datetime.strftime(datetime.today(), "%Y%m%d"))
 parser.add_option("--config", dest="config", help="Name of Configuration File", default=None)
+parser.add_option("--experiment", dest="expt", help="Name of Experiment", default=None)
 (options, args) = parser.parse_args()
 
 configParser = configparser.ConfigParser()
@@ -110,7 +110,10 @@ def get_corporate_action_occurrence(f, code, start_date, end_date):
 
 # Codes
 
-data_whitelist = [ int(x) for x in configParser.get("Main", "data_whitelist").split(",") ]
+all_codes = [ int(x) for x in configParser.get("Main", "data_whitelist").split(",") ]
+
+data_whitelist = [ int(x) for x in configParser.get(options.expt, "codes").split(",") ]
+data_whitelist = sorted([ x for x in data_whitelist if x in all_codes ])
 
 exclude_list = [ int(x) for x in configParser.get("Sample", "exclude").split(",") ]
 data_whitelist = [ x for x in data_whitelist if x not in exclude_list ]
@@ -145,25 +148,12 @@ eligible_codes = [ c for c in eligible_codes if c not in toDelete ]
 print("Filtered by Industry -", file=sys.stderr)
 print(eligible_codes, file=sys.stderr)
 
-# Ratings
+# Make a duplicate list for prices
 
-ratings_file = configParser.get("Main", "ratings_file")
+price_whitelist = [ x for x in data_whitelist ]
 
-min_analysts_count = int(configParser.get("Sample", "min_analysts_count"))
-
-toDelete = []
-for code in eligible_codes:
-    ratings = get_latest_ratings(os.path.join(options.directory, ratings_file), code)
-    analysts_count = (ratings.buy_analysts + ratings.outperform_analysts + ratings.hold_analysts + ratings.underperform_analysts + ratings.sell_analysts) if ratings is not None else 0
-    if analysts_count < min_analysts_count:
-        toDelete += [code]
-    else:
-        all_ratings[code] = ratings
-
-eligible_codes = [ c for c in eligible_codes if c not in toDelete ]
-
-print("Filtered by No. of Analysts -", file=sys.stderr)
-print(eligible_codes, file=sys.stderr)
+print("Price List -", file=sys.stderr)
+print(price_whitelist, file=sys.stderr)
 
 # Turnover / Missing Data
 
@@ -186,12 +176,12 @@ toDelete = []
 for d in dates:
     foo = bars.read_all_bars(os.path.join(options.directory, prices_folder, d))
     for code in foo:
-        if code not in eligible_codes:
+        if code not in price_whitelist:
             continue
         if code not in foos:
             foos[code] = []
         foos[code] += foo[code]
-    for code in eligible_codes:
+    for code in price_whitelist:
         if code not in foo:
             if code not in toDelete:
                 toDelete += [code]
@@ -216,7 +206,24 @@ for code in grouped_bars:
 
 eligible_codes = [ c for c in eligible_codes if c not in toDelete ]
 
-print("Filtered by Avarage Turnover -", file=sys.stderr)
+# Ratings
+
+ratings_file = configParser.get("Main", "ratings_file")
+
+min_analysts_count = int(configParser.get("Sample", "min_analysts_count"))
+
+toDelete = []
+for code in eligible_codes:
+    ratings = get_latest_ratings(os.path.join(options.directory, ratings_file), code)
+    analysts_count = (ratings.buy_analysts + ratings.outperform_analysts + ratings.hold_analysts + ratings.underperform_analysts + ratings.sell_analysts) if ratings is not None else 0
+    if analysts_count < min_analysts_count:
+        toDelete += [code]
+    else:
+        all_ratings[code] = ratings
+
+eligible_codes = [ c for c in eligible_codes if c not in toDelete ]
+
+print("Filtered by No. of Analysts -", file=sys.stderr)
 print(eligible_codes, file=sys.stderr)
 
 # Issued Shares
@@ -266,7 +273,10 @@ all_volatilities = {}
 max_log_volatility_diff = float(configParser.get("Sample", "max_log_volatility_diff"))
 
 for code in eligible_codes:
-    all_volatilities[code] = xs.get_volatility(grouped_bars[code])
+    try:  # May not be able to calculate volatility
+        all_volatilities[code] = xs.get_volatility(grouped_bars[code])
+    except:
+        continue
 
 eligible_pairs = []
 
@@ -276,8 +286,11 @@ for code1 in eligible_codes:
             continue
         if all_industries[code1] != all_industries[code2] or all_sectors[code1] != all_sectors[code2]:
             continue
-        if numpy.fabs(numpy.log(all_volatilities[code1]) - numpy.log(all_volatilities[code2])) / 2 <= max_log_volatility_diff:
-           eligible_pairs += [(code1, code2)]
+        try:
+            if numpy.fabs(numpy.log(all_volatilities[code1]) - numpy.log(all_volatilities[code2])) / 2 <= max_log_volatility_diff:
+                eligible_pairs += [(code1, code2)]
+        except:
+           continue
 
 print("Eligible Pairs -", file=sys.stderr)
 print(eligible_pairs, file=sys.stderr)
@@ -291,7 +304,9 @@ market_pm_open_time = datetime.strptime(bars.market_pm_open, "%H:%M:%S%z")
 market_am_close_time = datetime.strptime(bars.market_am_close, "%H:%M:%S%z")
 market_pm_close_time = datetime.strptime(bars.market_pm_close, "%H:%M:%S%z")
 
-for code in eligible_codes:
+for code in price_whitelist:
+    if code not in foos:
+        continue
     toDelete = []
     for i in range(0, len(foos[code])):
         ts = datetime.fromtimestamp(foos[code][i].timestamp)
@@ -327,15 +342,35 @@ for code in eligible_codes:
 
 # Write Output
 
-daily_samples_folder = configParser.get("Sample", "daily_samples_folder")
+experiment_folder = configParser.get(options.expt, "experiment_folder")
 
 try:
-    os.makedirs(os.path.join(options.directory, daily_samples_folder))
+    os.makedirs(os.path.join(options.directory, experiment_folder))
 except OSError:
     pass
 
-hdf = pandas.HDFStore(os.path.join(options.directory, daily_samples_folder, "%s.h5" % options.date))
+today_timestamp = datetime.combine(ref_date.date(), dt.time(0, 0)).timestamp()
 
+hdf = pandas.HDFStore(os.path.join(options.directory, experiment_folder, "data.h5"))
+
+if "price" not in hdf:
+    price_df = pandas.DataFrame(columns=tuple(['code'] + list(bars.Bar._fields)), dtype=numpy.float64)
+else:
+    price_df = hdf["price"][hdf["price"]["timestamp"] < today_timestamp]
+
+for code in price_whitelist:
+    if code not in foos:
+        continue
+    tmp_prices = [ b for b in foos[code] if datetime.fromtimestamp(b.timestamp).date() == ref_date.date() ]
+    if len(tmp_prices) == 0:
+        continue
+    tmp_df = pandas.DataFrame(tmp_prices, columns=bars.Bar._fields, dtype=numpy.float64)
+    tmp_df['code'] = pandas.Series(numpy.ones(tmp_df.shape[0]) * code)
+    price_df = price_df.append(tmp_df, ignore_index=True)
+
+hdf.put("price", price_df, format="table", data_columns=True)
+
+"""
 raw_df = pandas.DataFrame(columns=tuple(['code'] + list(bars.Bar._fields)), dtype=numpy.float64)
 for code in eligible_codes:
     tmp_df = pandas.DataFrame(foos[code], columns=bars.Bar._fields)
@@ -348,6 +383,9 @@ for code in eligible_codes:
     tmp_df['px_last'] = tmp_df['px_last'] / p
     tmp_df['code'] = pandas.Series(numpy.ones(tmp_df.shape[0]) * code)
     raw_df = raw_df.append(tmp_df, ignore_index=True)
+"""
+
+"""
 for pair in eligible_pairs:
     tmp_df1 = pandas.DataFrame(foos[pair[0]], columns=bars.Bar._fields)
     tmp_avg1 = (tmp_df1['px_open'] + tmp_df1['px_high'] + tmp_df1['px_low'] + tmp_df1['px_last']) / 4
@@ -364,8 +402,23 @@ for pair in eligible_pairs:
     tmp_df1['code'] = pandas.Series(numpy.ones(tmp_df1.shape[0]) * (pair[0] * 100000 + pair[1]))
     raw_df = raw_df.append(tmp_df1, ignore_index=True)
 hdf.put("raw", raw_df, format="table", data_columns=True)
+"""
+
+if "eligible" not in hdf:
+    eligible_df = pandas.DataFrame(columns=("timestamp", "code"), dtype=numpy.float64)
+else:
+    eligible_df = hdf["eligible"][hdf["eligible"]["timestamp"] < today_timestamp]
+
+for code in eligible_codes:
+    tmp_df = pandas.DataFrame([[today_timestamp, code]], columns=("timestamp", "code"))
+    eligible_df = eligible_df.append(tmp_df, ignore_index=True)
+for pair in eligible_pairs:
+    tmp_df = pandas.DataFrame([[today_timestamp, pair[0] * 100000 + pair[1]]], columns=("timestamp", "code"))
+    eligible_df = eligible_df.append(tmp_df, ignore_index=True)
+
+hdf.put("eligible", eligible_df, format="table", data_columns=True)
 
 hdf.close()
 
-print("Daily sample saved to %s." % os.path.join(options.directory, daily_samples_folder, "%s.h5" % options.date), file=sys.stderr)
+print("Daily Data added to %s." % os.path.join(options.directory, experiment_folder, "data.h5"), file=sys.stderr)
 

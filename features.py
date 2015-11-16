@@ -7,7 +7,6 @@ import datetime as dtime
 from datetime import datetime
 from collections import namedtuple
 import re
-import math
 import statsmodels.robust
 import numpy
 import pandas
@@ -73,6 +72,10 @@ def generate_targets(series, expected_range, target_list):
     for (target, function_name, args) in requests:
         if function_name == "trailing_stop_trade":
             func = generate_trailing_stop_trade
+        elif function_name == "breakout_fade_trade":
+            func = generate_breakout_fade_trade
+        elif function_name == "pullback_trade":
+            func = generate_pullback_trade
         ret = func(series, expected_range, *args)
         res = numpy.append(res, ret)
         res_names += ["%s_%d" % (target, i + 1) for i in range(0, len(ret))]
@@ -107,33 +110,16 @@ def generate_trailing_stop_trade(series, expected_range, *args):
                         short_stopped = True
                     elif series['px_high'][i] * stop_loss_return < short_stop:
                         short_stop = series['px_high'][i] * stop_loss_return
-        if not long_stopped:
-            long_stop = series['px_last'][n-1]
-        if not short_stopped:
-            short_stop = series['px_last'][n-1]
-        return numpy.log([long_stop / series['px_open'][0], short_stop / series['px_open'][0]])
+        if not long_stopped and not short_stopped:  #
+            return numpy.zeros(2) * numpy.nan
+        else:
+            if not long_stopped:
+                long_stop = series['px_last'][n-1]
+            if not short_stopped:
+                short_stop = series['px_last'][n-1]
+            return numpy.log([long_stop / series['px_open'][0], series['px_open'][0] / short_stop])
     else:
-        return numpy.zeros(2) * numpy.NAN
-
-# args:
-# [Stop-loss ratio]
-# return:
-# [Long trade return, Short trade return]
-def generate_breakout_fade_trade(series, expected_range, *args):
-    if args:
-        stop_loss_ratio = args[0]
-        stop_loss_return = numpy.exp(expected_range * stop_loss_ratio)
-        n = series.shape[0]
-        long_opened = False
-        long_stopped = False
-        short_opened = False
-        short_stopped = False
-        for i in range(0, n):
-            if long_stopped and short_stopped:
-                break
-            pass
-    else:
-        return numpy.zeros(2) * numpy.NAN
+        return numpy.zeros(2) * numpy.nan
 
 # args:
 # [Pullback ratio, Stop-loss ratio]
@@ -146,10 +132,56 @@ def generate_pullback_trade(series, expected_range, *args):
         stop_loss_ratio = args[0]
         stop_loss_return = numpy.exp(expected_range * stop_loss_ratio)
         n = series.shape[0]
+        long_opened = False
+        long_stopped = False
+        short_opened = False
+        short_stopped = False
+        current_high = series['px_open'][0]
+        current_low = series['px_open'][0]
         for i in range(0, n):
             if long_stopped and short_stopped:
                 break
-            pass
+            else:
+                if long_opened:
+                    if not long_stopped:
+                        if series['px_low'][i] < long_stop:
+                            long_stop = series['px_low'][i]
+                            long_stopped = True
+                        elif series['px_low'][i] / stop_loss_return > long_stop:
+                            long_stop = series['px_low'][i] / stop_loss_return
+                else:
+                    if series['px_open'][i] < current_high / pullback_return:
+                        long_opened = True
+                        long_open = current_high / pullback_return
+                        long_stop = long_open / stop_loss_return
+                if short_opened:
+                    if not short_stopped:
+                        if series['px_high'][i] > short_stop:
+                            short_stop = series['px_high'][i]
+                            short_stopped = True
+                        elif series['px_high'][i] * stop_loss_return < short_stop:
+                            short_stop = series['px_high'][i] * stop_loss_return
+                else:
+                    if series['px_open'][i] > current_low * pullback_return:
+                        short_opened = True
+                        short_open = current_low * pullback_return
+                        short_stop = short_open * stop_loss_return
+        if not long_stopped and not short_stopped:  #
+            return numpy.zeros(2) * numpy.nan
+        else:
+            if long_opened:
+                if not long_stopped:
+                    long_stop = series['px_last'][n-1]
+            else:
+                long_open = series['px_last'][n-1]
+                long_stop = series['px_last'][n-1]
+            if short_opened:
+                if not short_stopped:
+                    short_stop = series['px_last'][n-1]
+            else:
+                short_open = series['px_last'][n-1]
+                short_stop = series['px_last'][n-1]
+            return numpy.log([long_stop / long_open, short_open / short_stop])
     else:
         return numpy.zeros(2) * numpy.NAN
 

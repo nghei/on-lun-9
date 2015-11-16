@@ -3,16 +3,12 @@
 import sys
 import os
 import operator
+import datetime as dt
 from datetime import datetime
 from optparse import OptionParser
 import configparser
-import math
 import numpy
 import pandas
-import sqlite3
-
-import batch
-import records
 
 import features
 
@@ -20,6 +16,7 @@ parser = OptionParser()
 parser.add_option("--directory", dest="directory", help="Directory to Store Data", default="data")
 parser.add_option("--date", dest="date", help="Date (YYYYMMDD)", default=datetime.strftime(datetime.today(), "%Y%m%d"))
 parser.add_option("--config", dest="config", help="Name of Configuration File", default=None)
+parser.add_option("--experiment", dest="expt", help="Name of Experiment", default=None)
 (options, args) = parser.parse_args()
 
 configParser = configparser.ConfigParser()
@@ -27,64 +24,109 @@ configParser.read(options.config)
 
 # Constants
 
-market_open_minutes = features.market_open_minutes
+experiment_folder = configParser.get(options.expt, "experiment_folder")
 
-daily_samples_folder = configParser.get("Sample", "daily_samples_folder")
+history_days = int(configParser.get(options.expt, "history_days"))
 
-feature_days = int(configParser.get("Train", "feature_days"))
+feature_days = int(configParser.get(options.expt, "feature_days"))
 
-feature_times = configParser.get("Train", "feature_times").split(",")
+feature_times = configParser.get(options.expt, "feature_times").split(",")
 
-wavelets = configParser.get("Train", "wavelets").split(",")
-wavelet_detail_per_level = int(configParser.get("Train", "wavelet_detail_per_level"))
-wavelet_scaling_per_level = float(configParser.get("Train", "wavelet_scaling_per_level"))
+wavelets = configParser.get(options.expt, "wavelets").split(",")
+wavelet_detail_per_level = int(configParser.get(options.expt, "wavelet_detail_per_level"))
 
-targets = configParser.get("Train", "targets").split(",")
+target_min_days = int(configParser.get(options.expt, "target_min_days"))
+target_max_days = int(configParser.get(options.expt, "target_max_days"))
 
-# Add features to daily sample
+targets = configParser.get(options.expt, "targets").split(",")
 
-hdf = pandas.HDFStore(os.path.join(options.directory, daily_samples_folder, "%s.h5" % options.date))
+# Utility Functions
 
-hdf_tables = hdf.keys()
-for table in hdf_tables:
-    if table != 'raw' and table != '/raw':
-        del hdf[table]
+# Generate features
 
-count = 0
+input_hdf = pandas.HDFStore(os.path.join(options.directory, experiment_folder, "data.h5"))
 
-input_df = hdf['raw']
-codes = input_df['code'].drop_duplicates()
-for code in codes:
-    input_series = input_df[input_df['code'] == code].reset_index(drop=True)
-    end_date = datetime.fromtimestamp(input_series['timestamp'][feature_days * market_open_minutes])
-    for feature_time in feature_times:
-        end_timestamp = datetime.combine(end_date.date(), datetime.strptime(feature_time, "%H:%M:%S").time()).timestamp()
-        (independent_series, expected_range, dependent_series) = features.split_series(input_series, end_timestamp)
-        (output_targets, output_target_titles) = features.generate_targets(dependent_series, expected_range, targets)
-        output_target_df_name = "targets_%s" % feature_time
-        output_target_df = pandas.DataFrame([output_targets], columns=output_target_titles, dtype=numpy.float64)
-        if output_target_df_name not in hdf:
-            hdf.put(output_target_df_name, output_target_df, format="table", data_columns=True)
+try:
+    os.makedirs(os.path.join(options.directory, experiment_folder, "samples"))
+except OSError:
+    pass
+
+output_hdf = pandas.HDFStore(os.path.join(options.directory, experiment_folder, "samples", "%s.h5" % options.date))
+
+price_df = input_hdf["price"]
+eligible_df = input_hdf["eligible"]
+
+codes = eligible_df["code"].drop_duplicates()
+
+all_dates = sorted(list(set([datetime.fromtimestamp(t).date() for t in price_df["timestamp"].drop_duplicates()])))
+
+dates = [d for d in all_dates if d <= datetime.strptime(options.date, "%Y%m%d").date()]
+
+date_count = 0
+sample_count = 0
+
+while date_count < history_days:
+    split_date = dates[-(target_min_days+date_count)]
+    end_date = max([dates[-(target_min_days+date_count-i+1)] for i in range(target_min_days, target_max_days+1)])
+    start_date = dates[-(feature_days+target_min_days+date_count)]
+    start_date_timestamp = datetime.combine(start_date, dt.time(0, 0)).timestamp()
+    end_date_timestamp = datetime.combine(end_date, dt.time(0, 0)).timestamp()
+    date_span = dates.index(end_date) - dates.index(start_date) + 1
+    start_timestamp = datetime.combine(start_date, features.market_am_open_time.time()).timestamp()
+    end_timestamp = datetime.combine(end_date, features.market_pm_close_time.time()).timestamp()
+    for code in codes:
+        code_eligibility = eligible_df[(eligible_df["code"] == code) & (eligible_df["timestamp"] >= start_date_timestamp) & (eligible_df["timestamp"] <= end_date_timestamp)]
+        if code_eligibility.shape[0] < date_span:
+            continue
+        if code <= 99999:
+            price_series = price_df[(price_df["code"] == code) & (price_df["timestamp"] >= start_timestamp) & (price_df["timestamp"] <= end_timestamp)].reset_index(drop=True)
         else:
-            hdf.append(output_target_df_name, output_target_df, format="table", data_columns=True)
-        for wavelet in wavelets:
-            output_features = features.generate_wavelet_features(independent_series, wavelet, wavelet_detail_per_level, wavelet_scaling_per_level)
-            output_feature_titles = ["input_%d" % (i + 1) for i in range(0, len(output_features))]
-            output_feature_df_name = "%s_%s" % (wavelet, feature_time)
-            output_feature_df = pandas.DataFrame([output_features], columns=output_feature_titles)
-            if output_feature_df_name not in hdf:
-                hdf.put(output_feature_df_name, output_feature_df, format="table", data_columns=True)
-            else:
-                hdf.append(output_feature_df_name, output_feature_df, format="table", data_columns=True)
-    count += 1
-    if count >= 100:
+            code1 = code // 100000
+            code2 = code % 100000
+            tmp_series1 = price_df[(price_df["code"] == code1) & (price_df["timestamp"] >= start_timestamp) & (price_df["timestamp"] <= end_timestamp)].reset_index(drop=True)
+            tmp_series2 = price_df[(price_df["code"] == code2) & (price_df["timestamp"] >= start_timestamp) & (price_df["timestamp"] <= end_timestamp)].reset_index(drop=True)
+            p1 = tmp_series1["px_open"][0]
+            p2 = tmp_series2["px_open"][0]
+            price_series = pandas.DataFrame(None, columns=tmp_series1.columns)
+            price_series["code"] = pandas.Series(numpy.ones(tmp_series1.shape[0]) * code)
+            price_series["timestamp"] = tmp_series1["timestamp"]
+            price_series["px_open"] = tmp_series1["px_open"] / p1 / 2 + tmp_series2["px_open"] / p2 / 2
+            price_series["px_high"] = tmp_series1["px_high"] / p1 / 2 + tmp_series2["px_high"] / p2 / 2
+            price_series["px_low"] = tmp_series1["px_low"] / p1 / 2 + tmp_series2["px_low"] / p2 / 2
+            price_series["px_last"] = tmp_series1["px_last"] / p1 / 2 + tmp_series2["px_last"] / p2 / 2
+            price_series["px_volume"] = pandas.Series(numpy.zeros(tmp_series1.shape[0]))
+        for t in feature_times:
+            split_timestamp = datetime.combine(split_date, datetime.strptime(t, "%H:%M:%S").time()).timestamp()
+            X_series, expected_range, Y_series = features.split_series(price_series, split_timestamp)
+            for wavelet in wavelets:
+                X = features.generate_wavelet_features(X_series, wavelet, wavelet_detail_per_level, 1)
+                X_titles = ["coef_%d" % (i + 1) for i in range(0, X.shape[0])]
+                X_df = pandas.DataFrame([X], columns=X_titles, dtype=numpy.float64)
+                X_df_name = "%s_%s" % (wavelet, t)
+                if X_df_name not in output_hdf:
+                    output_hdf.put(X_df_name, X_df, format="table", data_columns=True)
+                else:
+                    output_hdf.append(X_df_name, X_df, format="table", data_columns=True)
+            for target in targets:
+                Y, Y_titles = features.generate_targets(Y_series, expected_range, targets)
+                Y_df = pandas.DataFrame([Y], columns=Y_titles, dtype=numpy.float64)
+                Y_df_name = "%s_%s" % (target, t)
+                if Y_df_name not in output_hdf:
+                    output_hdf.put(Y_df_name, Y_df, format="table", data_columns=True)
+                else:
+                    output_hdf.append(Y_df_name, Y_df, format="table", data_columns=True)
+        sample_count += 1
+        print("(%s, %s, %s, %d)" % (start_date, split_date, end_date, code), file=sys.stderr)
+    if start_date <= dates[0]:
         break
+    date_count += 1
 
-for table in hdf.keys():
-    if table != 'raw' and table != '/raw':
-        hdf[table] = hdf[table].reset_index(drop=True)
-    
-hdf.close()
+for table in output_hdf.keys():
+    output_hdf[table] = output_hdf[table].reset_index(drop=True)
 
-print("Features and targets added to %s." % os.path.join(options.directory, daily_samples_folder, "%s.h5" % options.date), file=sys.stderr)
+output_hdf.close()
+
+input_hdf.close()
+
+print("%d samples added to %s." % (sample_count, os.path.join(options.directory, experiment_folder, "samples", "%s.h5" % options.date)), file=sys.stderr)
 
