@@ -370,40 +370,6 @@ for code in price_whitelist:
 
 hdf.put("price", price_df, format="table", data_columns=True)
 
-"""
-raw_df = pandas.DataFrame(columns=tuple(['code'] + list(bars.Bar._fields)), dtype=numpy.float64)
-for code in eligible_codes:
-    tmp_df = pandas.DataFrame(foos[code], columns=bars.Bar._fields)
-    tmp_avg = (tmp_df['px_open'] + tmp_df['px_high'] + tmp_df['px_low'] + tmp_df['px_last']) / 4
-    tmp_df['px_volume'] = tmp_df['px_volume'] * tmp_avg
-    p = tmp_df['px_open'][0]
-    tmp_df['px_open'] = tmp_df['px_open'] / p
-    tmp_df['px_high'] = tmp_df['px_high'] / p
-    tmp_df['px_low'] = tmp_df['px_low'] / p
-    tmp_df['px_last'] = tmp_df['px_last'] / p
-    tmp_df['code'] = pandas.Series(numpy.ones(tmp_df.shape[0]) * code)
-    raw_df = raw_df.append(tmp_df, ignore_index=True)
-"""
-
-"""
-for pair in eligible_pairs:
-    tmp_df1 = pandas.DataFrame(foos[pair[0]], columns=bars.Bar._fields)
-    tmp_avg1 = (tmp_df1['px_open'] + tmp_df1['px_high'] + tmp_df1['px_low'] + tmp_df1['px_last']) / 4
-    tmp_df1['px_volume'] = tmp_df1['px_volume'] * tmp_avg1
-    tmp_df2 = pandas.DataFrame(foos[pair[1]], columns=bars.Bar._fields)
-    tmp_avg2 = (tmp_df2['px_open'] + tmp_df2['px_high'] + tmp_df2['px_low'] + tmp_df2['px_last']) / 4
-    tmp_df2['px_volume'] = tmp_df2['px_volume'] * tmp_avg2
-    p1 = tmp_df1['px_open'][0]
-    p2 = tmp_df2['px_open'][0]
-    tmp_df1['px_open'] = tmp_df1['px_open'] / p1 / 2 + tmp_df2['px_open'] / p2 / 2
-    tmp_df1['px_high'] = tmp_df1['px_high'] / p1 / 2 + tmp_df2['px_high'] / p2 / 2
-    tmp_df1['px_low'] = tmp_df1['px_low'] / p1 / 2 + tmp_df2['px_low'] / p2 / 2
-    tmp_df1['px_last'] = tmp_df1['px_last'] / p1 / 2 + tmp_df2['px_last'] / p2 / 2
-    tmp_df1['code'] = pandas.Series(numpy.ones(tmp_df1.shape[0]) * (pair[0] * 100000 + pair[1]))
-    raw_df = raw_df.append(tmp_df1, ignore_index=True)
-hdf.put("raw", raw_df, format="table", data_columns=True)
-"""
-
 if "eligible" not in hdf:
     eligible_df = pandas.DataFrame(columns=("timestamp", "code"), dtype=numpy.float64)
 else:

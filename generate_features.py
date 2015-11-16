@@ -44,14 +44,9 @@ targets = configParser.get(options.expt, "targets").split(",")
 
 # Generate features
 
+memory = {}
+
 input_hdf = pandas.HDFStore(os.path.join(options.directory, experiment_folder, "data.h5"))
-
-try:
-    os.makedirs(os.path.join(options.directory, experiment_folder, "samples"))
-except OSError:
-    pass
-
-output_hdf = pandas.HDFStore(os.path.join(options.directory, experiment_folder, "samples", "%s.h5" % options.date))
 
 price_df = input_hdf["price"]
 eligible_df = input_hdf["eligible"]
@@ -103,30 +98,38 @@ while date_count < history_days:
                 X_titles = ["coef_%d" % (i + 1) for i in range(0, X.shape[0])]
                 X_df = pandas.DataFrame([X], columns=X_titles, dtype=numpy.float64)
                 X_df_name = "%s_%s" % (wavelet, t)
-                if X_df_name not in output_hdf:
-                    output_hdf.put(X_df_name, X_df, format="table", data_columns=True)
+                if X_df_name not in memory:
+                    memory[X_df_name] = X_df
                 else:
-                    output_hdf.append(X_df_name, X_df, format="table", data_columns=True)
+                    memory[X_df_name] = memory[X_df_name].append(X_df, ignore_index=True)
             for target in targets:
                 Y, Y_titles = features.generate_targets(Y_series, expected_range, targets)
                 Y_df = pandas.DataFrame([Y], columns=Y_titles, dtype=numpy.float64)
                 Y_df_name = "%s_%s" % (target, t)
-                if Y_df_name not in output_hdf:
-                    output_hdf.put(Y_df_name, Y_df, format="table", data_columns=True)
+                if Y_df_name not in memory:
+                    memory[Y_df_name] = Y_df
                 else:
-                    output_hdf.append(Y_df_name, Y_df, format="table", data_columns=True)
+                    memory[Y_df_name] = memory[Y_df_name].append(Y_df, ignore_index=True)
         sample_count += 1
         print("(%s, %s, %s, %d)" % (start_date, split_date, end_date, code), file=sys.stderr)
     if start_date <= dates[0]:
         break
     date_count += 1
 
-for table in output_hdf.keys():
-    output_hdf[table] = output_hdf[table].reset_index(drop=True)
+input_hdf.close()
+
+try:
+    os.makedirs(os.path.join(options.directory, experiment_folder, "samples"))
+except OSError:
+    pass
+
+output_hdf = pandas.HDFStore(os.path.join(options.directory, experiment_folder, "samples", "%s.h5" % options.date))
+
+for table in memory:
+    memory[table] = memory[table].reset_index(drop=True)
+    output_hdf.put(table, memory[table], format="table", data_columns=True)
 
 output_hdf.close()
-
-input_hdf.close()
 
 print("%d samples added to %s." % (sample_count, os.path.join(options.directory, experiment_folder, "samples", "%s.h5" % options.date)), file=sys.stderr)
 
