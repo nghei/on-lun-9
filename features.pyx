@@ -73,6 +73,8 @@ def generate_targets(series, expected_range, target_list):
     res = numpy.array([])
     res_names = []
     for (target, function_name, args) in requests:
+        if function_name == "excursion":
+            func = generate_excursion
         if function_name == "trailing_stop_trade":
             func = generate_trailing_stop_trade
         elif function_name == "pullback_trade":
@@ -81,6 +83,13 @@ def generate_targets(series, expected_range, target_list):
         res = numpy.append(res, ret)
         res_names += ["%s_%d" % (target, i + 1) for i in range(0, len(ret))]
     return (res, res_names)
+
+# args:
+# []
+# return:
+# [Long excursion, Short excursion]
+def generate_excursion(series, expected_range, *args):
+    return numpy.log([numpy.max(series["px_high"]) / series["px_open"][0], series["px_open"][0] / numpy.min(series["px_low"])])
 
 # args:
 # [Stop-loss ratio]
