@@ -43,12 +43,18 @@ targets = configParser.get(options.expt, "targets").split(",")
 
 # Generate features
 
-memory = {}
-
 input_hdf = pandas.HDFStore(os.path.join(options.directory, experiment_folder, "data.h5"))
 
 price_df = input_hdf["price"]
 eligible_df = input_hdf["eligible"]
+
+output_hdf = pandas.HDFStore(os.path.join(options.directory, experiment_folder, "samples.h5"))
+
+memory = {}
+
+for table in output_hdf.keys():
+    if table not in memory:
+        memory[table] = output_hdf[table]
 
 codes = eligible_df["code"].drop_duplicates()
 
