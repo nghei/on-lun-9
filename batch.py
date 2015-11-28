@@ -258,7 +258,7 @@ def get_china_commodity_futures_data(date):
         raise Exception("Failed to Load: %s" % req.url)
     return res
 
-def get_china_bulk_commodities_data(date, timeout=60):
+def get_china_bulk_commodities_data(date, timeout=360):
     ref_date = datetime.strptime(date + "2359+0800", "%Y%m%d%H%M%z")
     res = {}
     # sci99
