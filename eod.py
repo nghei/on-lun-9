@@ -284,6 +284,7 @@ except:
 
 print("China Commodity Futures Data Downloaded.", file=sys.stderr)
 
+"""
 # China Bulk Commodities
 
 china_bulk_commodities_file = configParser.get("Main", "china_bulk_commodities_file")
@@ -292,7 +293,7 @@ if not os.path.exists(os.path.join(options.directory, china_bulk_commodities_fil
     records.create_records(os.path.join(options.directory, china_bulk_commodities_file), ["code", "timestamp"] + list(batch.BulkCommodity._fields))
 
 try:
-    china_bulk_commodities = batch.get_china_bulk_commodities_data(options.date, timeout=180)
+    china_bulk_commodities = batch.get_china_bulk_commodities_data(options.date, timeout=360)
     recs = []
     for code in sorted(china_bulk_commodities):
         for timestamp in sorted(china_bulk_commodities[code]):
@@ -304,6 +305,7 @@ except Exception as e:
     print("No China Bulk Commodities Data for %s." % options.date, file=sys.stderr)
 
 print("China Bulk Commodities Data Downloaded.", file=sys.stderr)
+"""
 
 # Short Selling
 
