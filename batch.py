@@ -159,6 +159,13 @@ def get_intraday_data(code):
                         res[timestamp]["low"] = res[timestamps[timestamp_index]]["close"]
                         res[timestamp]["close"] = res[timestamps[timestamp_index]]["close"]
                 res[timestamp]["volume"] = current_volume
+    to_delete = []
+    for timestamp in res:
+        d = datetime.fromtimestamp(timestamp)
+        if d.hour == 13 and d.minute == 0:
+            to_delete += [timestamp]
+    for t in to_delete:
+        del res[t]
     return res
 
 def get_intraday_data_china(code):
